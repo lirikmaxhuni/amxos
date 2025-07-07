@@ -11,8 +11,8 @@ align 4
 section .gdt
 gdt_start:
     dq 0x0000000000000000     ; Null descriptor
-    dq 0x00cf9a000000ffff     ; Code segment
-    dq 0x00cf92000000ffff     ; Data segment
+    dq 0x00cf9a000000ffff     ; Code segment (base=0, limit=4GB, code)
+    dq 0x00cf92000000ffff     ; Data segment (base=0, limit=4GB, data)
 gdt_end:
 
 gdt_descriptor:
@@ -45,54 +45,38 @@ next:
 
 section .bss
 align 16
+global stack_bottom
 global stack_top
 stack_bottom:
     resb 16384
 stack_top:
 
-; Keyboard interrupt handler (IRQ1, interrupt vector 0x21)
-global keyboard_handler
-extern keyboard_on_interrupt
+; Minimal keyboard interrupt handler (IRQ1, interrupt vector 0x21)
+global asm_keyboard_on_interrupt
+extern keyboard_interrupt_handler
 
+section .text
+align 4
 global asm_keyboard_on_interrupt
 asm_keyboard_on_interrupt:
-    pusha
-    mov eax, 0xB8000
-    add eax, 4000           ; 80*25*2 = 4000 bytes for 25 lines
-    sub eax, 2              ; Last character cell
-    mov byte [eax], 'Z'
-    mov byte [eax+1], 0x2E
-    mov ax, ds
-    mov bx, 0xB8000
-    add bx, 188
-    mov byte [bx], al
-    mov byte [bx+1], 0x2E
-    mov byte [bx+2], ah
-    mov byte [bx+3], 0x2E
-    popa
-    ret
-
-keyboard_handler:
-    cli
     pusha
     push ds
     push es
     push fs
     push gs
-
     mov ax, 0x10
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
-
     in al, 0x60
-    mov eax, 0xB8000
-    add eax, 4000           ; 80*25*2 = 4000 bytes for 25 lines
-    sub eax, 2              ; Last character cell
-    mov byte [eax], 'Z'
-    mov byte [eax+1], 0x2E
-
+    movzx eax, al
+    mov ecx, esp
+    and esp, 0xFFFFFFF0
+    push eax
+    call keyboard_interrupt_handler
+    add esp, 4
+    mov esp, ecx
     pop gs
     pop fs
     pop es
@@ -102,27 +86,74 @@ keyboard_handler:
     popa
     iret
 
+align 4
 global default_handler
 default_handler:
     pusha
-    mov eax, 0xB8000
-    mov byte [eax], 'X'
-    mov byte [eax+1], 0x4F
     mov al, 0x20
     out 0x20, al
-    mov al, 0x20
-    out 0xA0, al
     popa
     iret
 
-global exception_handler
-exception_handler:
+align 4
+global pure_asm_keyboard_handler
+pure_asm_keyboard_handler:
     pusha
-    mov eax, 0xB8000
-    mov byte [eax+4], 'E'   ; Write 'E' at position 2 (after 'Y')
-    mov byte [eax+5], 0x1F
-    add esp, 4              ; Remove error code if present
     mov al, 0x20
     out 0x20, al
     popa
     iret
+
+; Timer interrupt handler (IRQ0, interrupt vector 0x20)
+global asm_timer_on_interrupt
+extern timer_interrupt_handler
+
+section .text
+align 4
+global asm_timer_on_interrupt
+asm_timer_on_interrupt:
+    pusha
+    push ds
+    push es
+    push fs
+    push gs
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    call timer_interrupt_handler
+    mov al, 0x20
+    out 0x20, al
+    pop gs
+    pop fs
+    pop es
+    pop ds
+    popa
+    iret
+
+; Page fault handler (interrupt 0xE)
+global asm_page_fault_handler
+extern page_fault_handler
+
+section .text
+align 4
+global asm_page_fault_handler
+asm_page_fault_handler:
+    cli
+    mov byte [0xB8000], 'F'
+    mov byte [0xB8001], 0x4F
+    pusha
+    mov eax, [esp + 32] ; error code after pusha
+    push eax
+    call page_fault_handler
+    add esp, 4
+    popa
+    iret
+
+global asm_double_fault_handler
+asm_double_fault_handler:
+    mov byte [0xB8002], 'D'
+    mov byte [0xB8003], 0x4C
+    cli
+    hlt
