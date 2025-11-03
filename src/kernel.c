@@ -1,6 +1,11 @@
 #include <stdint.h>
+#include "kernel.h"
 #include "keyboard.h"
 #include "task.h"
+#include "debug.h"
+
+#define DEBUG
+
 extern void task_trampoline(void);
 
 // IDT entry structure (x86)
@@ -67,13 +72,6 @@ void pic_remap() {
     outb(0xA1, 0xFF); // all slave IRQs masked
 }
 
-// void keyboard_on_interrupt(uint8_t scancode) __attribute__((cdecl));
-// void keyboard_on_interrupt(uint8_t scancode) {
-//     volatile char *video = (volatile char*)0xB8000;
-//     video[6] = 'A'; // Just write a fixed character for now
-//     video[7] = 0x2E;
-// }
-
 // Add a local strcmp implementation for kernel use
 int strcmp(const char *a, const char *b) {
     while (*a && (*a == *b)) {
@@ -121,6 +119,11 @@ void scroll_screen() {
 volatile int cursor_visible = 1;
 volatile int cursor_blink_request = 0;
 
+// Preemption control for critical sections
+volatile int preempt_disable = 0;
+void preempt_disable_enter() { preempt_disable++; }
+void preempt_disable_exit() { if (preempt_disable > 0) preempt_disable--; }
+
 void timer_interrupt_handler(void) {
     static int tick = 0;
     tick++;
@@ -129,7 +132,9 @@ void timer_interrupt_handler(void) {
         cursor_visible = !cursor_visible;
         cursor_blink_request = 1;
     }
-    // task_yield(); // Removed for cooperative multitasking
+    if (!preempt_disable) {
+        task_yield(); // Only yield if preemption is enabled
+    }
 }
 
 // Free-list allocator for kernel heap (with alignment and safety checks)
@@ -300,6 +305,7 @@ void page_fault_handler(uint32_t err_code) {
 }
 
 void shell_task(void) {
+    print_line("SHELL TASK STARTED", 0);
     print_line("SHELL START", 5);
     const char *msg = "Hello, World! Ku je ma bellushh@bella ma i qarti";
     int msg_len = 0;
@@ -621,8 +627,10 @@ void idle_task(void) {
     while (1) { asm volatile ("hlt"); }
 }
 
+
 void test_sleep_task(void) {
     int row = 0;
+    
     while (1) {
         print_line("=== TEST TASK RUNNING ===", row);
         task_sleep(100); // Sleep for 100 timer ticks (~1 second)
@@ -635,7 +643,16 @@ void test_sleep_task(void) {
     }
 }
 
+// Unified kernel panic handler
+void kernel_panic(const char *msg) {
+    print_line("KERNEL PANIC:", 23);
+    print_line(msg, 24);
+    while (1) { asm volatile ("cli; hlt"); }
+}
+
+
 void kmain(void) {
+    print_line("Welcome to AMXOS!", 0);
     pic_remap();
     heap_init();
     pmm_init();
@@ -717,13 +734,18 @@ void kmain(void) {
 
     asm volatile("sti");
 
-    tasking_init();
-    task_create(idle_task);
+    tasking_init(); // Initialize tasking system
     task_create(shell_task);
     task_create(test_sleep_task);
-    task_switch();
-    // Should never reach here, but just in case
-    while (1) { asm volatile ("hlt"); }
+    
+    // Directly jump to the first task's context
+    task_t *t = get_current_task();
+    asm volatile (
+        "mov %0, %%esp\n"
+        "jmp *%1\n"
+        :
+        : "r"(t->context.esp), "r"(t->context.eip)
+    );
 }
 
 // Move these functions out of kmain and make them global functions
@@ -745,3 +767,4 @@ void print_at(const char *str, int row, int col) {
         video[(row * 80 + col + i) * 2 + 1] = 0x0F;
     }
 }
+

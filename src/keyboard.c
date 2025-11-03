@@ -1,5 +1,6 @@
 #include "keyboard.h"
 #include <stdint.h>
+#include "debug.h"
 
 #define KB_BUFFER_SIZE 128
 
