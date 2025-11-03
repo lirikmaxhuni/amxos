@@ -1,0 +1,33 @@
+Save this as `.gitignore` in the same directory:
+
+```gitignore
+# Build artifacts
+*.o
+*.bin
+*.elf
+*.iso
+*.img
+
+# Build directories
+/build/
+isodir/boot/kernel.elf
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# Editor and OS metadata
+*.swp
+*.swo
+*.bak
+.DS_Store
+Thumbs.db
+
+# Backup files
+*~
+
+# Ignore compiled kernel outputs
+kernel.map
+
+# Exclude qemu output dumps
+qemu_*.out
